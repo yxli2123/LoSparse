@@ -1,3 +1,120 @@
 # LoSparse
 
-![LoSparse_logo](asset/LoSparse_logo.png)
+<img src="asset/LoSparse_logo.png" alt="LoSparse_logo" style="zoom:10%;" />
+
+## Overview
+
+A highly efficient compression method combining structured pruning and low-rank approximation.
+
+We use a low-rank matrix which can be decomposed into two small matrices and a structured sparse matrix to approximate the weight matrix during the downstream task fine-tuning. The diagram is illustrated in below:
+
+<img src="asset/LoSparse_diagram.png" alt="LoSparse_diagram" style="zoom:10%;" />
+
+## Main Results
+
+**DeBERTa-v3-base on GLUE w/o knowledge distillation**
+
+| Ratio | MNLI      | RTE  | QNLI | MRPC        | QQP       | SST-2 | CoLA | STS-B     |
+| ----- | --------- | ---- | ---- | ----------- | --------- | ----- | ---- | --------- |
+| 100%* | 90.5/90.6 | 82.0 | 94.0 | 89.5 / 93.3 | 92.4/89.8 | 95.3  | 69.2 | 91.6/91.1 |
+| 20%   | 84.5/83.8 | 68.0 | 88.6 | 85.0/89.4   | 90.6/87.2 | 91.7  | 50.0 | 88.8/88.5 |
+| 15%   | 83.3/82.9 | 66.9 | 87.6 | 83.6/88.0   | 90.3/87.0 | 90.4  | 46.8 | 87.7/87.3 |
+| 10%   | 81.7/81.8 | 66.0 | 86.1 | 82.3/87.4   | 89.5/86.0 | 89.2  | 40.0 | 87.2/87.0 |
+
+*: full model fine-tuning
+
+**DeBERTa-v3-base on SQuAD v1.1 w/o knowledge distillation**
+
+| Ratio | 5%        | 10%       | 20%       | 30%       | 40%       | 50%       |
+| ----- | --------- | --------- | --------- | --------- | --------- | --------- |
+|       | 69.3/79.1 | 72.9/82.8 | 76.8/85.8 | 80.2/88.0 | 82.1/89.4 | 82.3/90.3 |
+
+**BART-large on CNN/DailyMail and XSum w/o knowledge distillation**
+
+| Ratio   | XSum              | CNN/DailyMail     |
+| ------- | ----------------- | ----------------- |
+| Lead-3* | 16.30/1.60/11.95  | 40.42/17.62/36.67 |
+| 100%**  | 45.14/22.27/37.25 | 44.16/21.28/40.90 |
+| 50%     | 39.18/16.91/31.62 | 41.54/19.04/38.58 |
+| 40%     | 38.30/16.02/30.72 | 41.42/19.00/38.47 |
+| 30%     | 37.41/15.42/30.02 | 41.21/18.84/38.21 |
+
+*: Using the first 3 sentences in the document as the summary
+
+**: full model fine-tuning
+
+## Train
+
+We use huggingface 🤗 as our training code scripts. See examples [here](https://github.com/huggingface/transformers/tree/main/examples/pytorch)
+
+### Requirements
+
+`pip install -r requirements.txt`
+
+### Training Files
+
+* GLUE: `run_glue.py`
+* SQuAD: `run_squad.py`
+* Summarization: `run_summarization.py`
+
+An example command for training on GLUE dataset is:
+
+```shell
+python run_glue.py \
+  --dataset_name \
+  
+```
+
+### Plug to your code!
+
+3 steps to apply our method to your code. Make sure you have `import utils` first.
+
+#### Step 1: Replace Matrices
+
+Insert the following code after loaded the pre-training model 
+
+```python
+# Substitute weights with low rank matrix and sparse matrix
+allow_name = ['query', 'key', 'value', 'q_proj', 'k_proj', 'v_proj', 'out_proj', 'dense', 'attention', 'fc1', 'fc2']
+block_name = ['pooler', 'classifier', 'LayerNorm', 'embeddings']
+
+utils.substitute_layer_weights(module=model,
+                               allow_name=allow_name,
+                               block_name=block_name,
+                               parameter_ratio=args.low_rank_parameter_ratio,
+                               do_svd=True)
+```
+
+#### Step 2: Setup Pruner
+
+Insert the following code anywhere before the training loop
+
+```python
+pruner = utils.Pruner(model=model, 
+                      args=args, 
+                      total_step=args.max_train_steps,
+                      mask_param_name=['sparse'], 
+                      pruner_name='PLATON',
+                      structured_method=args.structured_method,
+                      structured_direction=args.structured_direction)
+
+```
+
+#### Step 3: Prune During Training
+
+Insert `threshold, mask_threshold = pruner.update_and_pruning(model, completed_steps)` after `loss.backward()` but before `optimizer.zero_grad()`. For example:
+
+```python
+for batch in dataloader:
+    outputs = model(**batch)
+    loss = outputs.loss
+    loss.backward()
+    optimizer.step()
+
+    # Prune the sparse matrix
+    threshold, mask_threshold = pruner.update_and_pruning(model, completed_steps)
+
+    lr_scheduler.step()
+    optimizer.zero_grad()
+```
+
