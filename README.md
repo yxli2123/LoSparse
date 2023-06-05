@@ -2,6 +2,10 @@
 
 <img src="asset/LoSparse_logo.png" alt="LoSparse_logo" style="zoom:10%;" />
 
+
+
+This pytorch package implements [LoSparse: Structured Compression of Large Language Models based on Low-Rank and Sparse Approximation]() (ICML 2023).
+
 ## Overview
 
 A highly efficient compression method combining structured pruning and low-rank approximation.
@@ -64,6 +68,20 @@ python run_glue.py \
   --dataset_name \
   
 ```
+
+### Arguments
+
+#### Main experiment arguments
+
+- `--low_rank_parameter_ratio`: The proportion of retained low-rank matrix parameters. For example: 0.10
+- `--final_threshold`: The proportion of retained sparse matrix parameters. For example: 0.20
+- `--deltaT`: prune every `deltaT` steps
+
+#### Other experiment arguments
+
+- `--initial_warmup`: steps that do not prune; fine-tuning only
+- `--final_warmup`: steps that do not decrease the pruning ratio
+- `--beta1`: moving average coefficient of the importance score
 
 ### Plug to your code!
 
