@@ -58,7 +58,7 @@ We use huggingface 🤗 as our training code scripts. See examples [here](https:
 ### Training Files
 
 * GLUE: `run_glue.py`
-* SQuAD: `run_squad.py`
+* Question Answering: `run_qa.py`
 * Summarization: `run_summarization.py`
 
 An example command for training on GLUE dataset is:
@@ -83,7 +83,7 @@ python run_glue.py \
 - `--final_warmup`: steps that do not decrease the pruning ratio
 - `--beta1`: moving average coefficient of the importance score
 
-### Plug to your code!
+## Plug to your code!
 
 3 steps to apply our method to your code. Make sure you have `import utils` first.
 
