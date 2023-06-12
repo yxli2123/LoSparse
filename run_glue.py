@@ -588,6 +588,33 @@ def main():
 
             if completed_steps >= args.max_train_steps:
                 break
+            if completed_steps % (num_update_steps_per_epoch//4) == 1:
+                output_dir = f"step_{completed_steps}"
+                if args.output_dir is not None:
+                    output_dir = os.path.join(args.output_dir, output_dir)
+                accelerator.save_state(output_dir)
+                model.eval()
+                samples_seen = 0
+                for step, batch in enumerate(eval_dataloader):
+                    with torch.no_grad():
+                        outputs = model(**batch)
+                    predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
+                    predictions, references = accelerator.gather((predictions, batch["labels"]))
+                    # If we are in a multiprocess environment, the last batch has duplicates
+                    if accelerator.num_processes > 1:
+                        if step == len(eval_dataloader) - 1:
+                            predictions = predictions[: len(eval_dataloader.dataset) - samples_seen]
+                            references = references[: len(eval_dataloader.dataset) - samples_seen]
+                        else:
+                            samples_seen += references.shape[0]
+                    metric.add_batch(
+                        predictions=predictions,
+                        references=references,
+                    )
+
+                eval_metric = metric.compute()
+                logger.info(
+                    f"Running LoSparse with seed {args.seed} with sparse threshold {threshold} with learning rate {args.learning_rate} rank ratio {args.low_rank_parameter_ratio} on step {completed_steps}  Evaluation metrics: {eval_metric}")
 
         model.eval()
         samples_seen = 0

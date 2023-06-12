@@ -1,6 +1,6 @@
 # Squad
 # Trained on a single V100 32GB
-CUDA_VISIBLE_DEVICES=6 python run_qa.py \
+python run_qa.py \
 --dataset_name squad \
 --model_name_or_path bert-base-uncased \
 --warmup_steps 5400 \
