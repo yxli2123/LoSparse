@@ -68,7 +68,7 @@ python run_glue.py \
   --dataset_name \
   
 ```
-
+We provided sample script in: `train_qa.sh`
 ### Arguments
 
 #### Main experiment arguments

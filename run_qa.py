@@ -922,6 +922,54 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
+            if completed_steps % (num_update_steps_per_epoch // 2) == 1:
+                logger.info("***** Saving Checkpoints *****")
+                output_dir = f"step_{completed_steps}"
+                if args.output_dir is not None:
+                    output_dir = os.path.join(args.output_dir, output_dir)
+                logger.info(f"path is {output_dir}")
+                accelerator.save_state(output_dir)
+                logger.info("***** Running Evaluation *****")
+                logger.info(f"  Num examples = {len(eval_dataset)}")
+                logger.info(f"  Batch size = {args.per_device_eval_batch_size}")
+
+                all_start_logits = []
+                all_end_logits = []
+                model.eval()
+
+                for step, batch in enumerate(eval_dataloader):
+                    with torch.no_grad():
+                        outputs = model(**batch)
+                        start_logits = outputs.start_logits
+                        end_logits = outputs.end_logits
+
+                        if not args.pad_to_max_length:  # necessary to pad predictions and labels for being gathered
+                            start_logits = accelerator.pad_across_processes(start_logits, dim=1, pad_index=-100)
+                            end_logits = accelerator.pad_across_processes(end_logits, dim=1, pad_index=-100)
+
+                        all_start_logits.append(accelerator.gather_for_metrics(start_logits).cpu().numpy())
+                        all_end_logits.append(accelerator.gather_for_metrics(end_logits).cpu().numpy())
+
+                max_len = max([x.shape[1] for x in all_start_logits])  # Get the max_length of the tensor
+
+                # concatenate the numpy array
+                start_logits_concat = create_and_fill_np_array(all_start_logits, eval_dataset, max_len)
+                end_logits_concat = create_and_fill_np_array(all_end_logits, eval_dataset, max_len)
+
+                # delete the list of numpy arrays
+                del all_start_logits
+                del all_end_logits
+
+                outputs_numpy = (start_logits_concat, end_logits_concat)
+                prediction = post_processing_function(eval_examples, eval_dataset, outputs_numpy)
+                eval_metric = metric.compute(predictions=prediction.predictions, references=prediction.label_ids)
+                logger.info(
+                    f"Running LoSparse with seed {args.seed} with sparse threshold {threshold} with learning rate {args.learning_rate} rank ratio {args.low_rank_parameter_ratio} on step {completed_steps}  Evaluation metrics: {eval_metric}")
+
+
+                if threshold == args.final_threshold:
+                    performace_dict[completed_steps] = eval_metric["f1"]
+
         if args.checkpointing_steps == "epoch":
             output_dir = f"epoch_{epoch}"
             if args.output_dir is not None:
