@@ -22,17 +22,17 @@ import random
 from pathlib import Path
 
 import datasets
-import evaluate
 import torch
-from accelerate import Accelerator
-from accelerate.logging import get_logger
-from accelerate.utils import set_seed
 from datasets import load_dataset
-from huggingface_hub import Repository, create_repo
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+import evaluate
 import transformers
+from accelerate import Accelerator
+from accelerate.logging import get_logger
+from accelerate.utils import set_seed
+from huggingface_hub import Repository
 from transformers import (
     AutoConfig,
     AutoModelForSequenceClassification,
@@ -46,10 +46,10 @@ from transformers import (
 from transformers.utils import check_min_version, get_full_repo_name, send_example_telemetry
 from transformers.utils.versions import require_version
 import utils
-
-
+from torch.nn import MSELoss
+import torch.nn.functional as F
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-# check_min_version("4.30.0.dev0")
+
 
 logger = get_logger(__name__)
 
@@ -89,7 +89,7 @@ def parse_args():
         default=128,
         help=(
             "The maximum total input sequence length after tokenization. Sequences longer than this will be truncated,"
-            " sequences shorter will be padded if `--pad_to_max_length` is passed."
+            " sequences shorter will be padded if `--pad_to_max_lengh` is passed."
         ),
     )
     parser.add_argument(
@@ -180,7 +180,7 @@ def parse_args():
         default="all",
         help=(
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`,'
-            ' `"wandb"`, `"comet_ml"` and `"clearml"`. Use `"all"` (default) to report to all integrations.'
+            ' `"wandb"` and `"comet_ml"`. Use `"all"` (default) to report to all integrations.'
             "Only applicable when `--with_tracking` is passed."
         ),
     )
@@ -189,21 +189,20 @@ def parse_args():
         action="store_true",
         help="Whether or not to enable to load a pretrained model whose head dimensions are different.",
     )
-    #############################
-    #    Experiment Argument    #
-    #############################
-    parser.add_argument("--low_rank_parameter_ratio", type=float,  default=0.05,
+    parser.add_argument("--low_rank_parameter_ratio", type=float, default=0.05,
                         help="parameter number of low rank matrix / parameter number of original matrix")
-    parser.add_argument("--initial_threshold",    type=float,  default=1.0)
-    parser.add_argument("--final_threshold",      type=float,  default=0.1)
-    parser.add_argument("--initial_warmup",       type=int,    default=1)
-    parser.add_argument("--final_warmup",         type=int,    default=3)
-    parser.add_argument("--warmup_steps",         type=int,    default=6400)
-    parser.add_argument("--beta1",                type=float,  default=0.85)
-    parser.add_argument("--beta2",                type=float,  default=1., help="disable uncertainty when 1.")
-    parser.add_argument("--deltaT",               type=int,    default=10)
-    parser.add_argument("--eval_checkpoint",      type=str,    default="No checkpoint", help="use this during the evaluation")
-
+    parser.add_argument("--has_sparse", type=bool, default=True)
+    parser.add_argument(
+        "--stored_model_path",
+        type=str
+    )
+    parser.add_argument(
+        "--teacher_path",
+        type=str
+    )
+    parser.add_argument("--alpha_output", type=int, default=1)
+    parser.add_argument("--alpha_layer", type=int, default=1)
+    parser.add_argument("--eval_checkpoint", type=str, default="No checkpoint", help="use this during the evaluation")
     args = parser.parse_args()
 
     # Sanity checks
@@ -225,16 +224,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
-    # information sent is the one passed as arguments along with your Python/PyTorch versions.
-    send_example_telemetry("run_glue_no_trainer", args)
-
-    # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
-    # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
-    # in the environment
-    accelerator = (
-        Accelerator(log_with=args.report_to, logging_dir=args.output_dir) if args.with_tracking else Accelerator()
-    )
+    accelerator = Accelerator()
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -260,8 +250,7 @@ def main():
                 repo_name = get_full_repo_name(Path(args.output_dir).name, token=args.hub_token)
             else:
                 repo_name = args.hub_model_id
-            create_repo(repo_name, exist_ok=True, token=args.hub_token)
-            repo = Repository(args.output_dir, clone_from=repo_name, token=args.hub_token)
+            repo = Repository(args.output_dir, clone_from=repo_name)
 
             with open(os.path.join(args.output_dir, ".gitignore"), "w+") as gitignore:
                 if "step_*" not in gitignore:
@@ -323,6 +312,22 @@ def main():
     #
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
+    ####Prepare teacher model
+    temperature = 2
+    teacher_path = args.teacher_path
+    # teacher_path =
+
+    t_config = AutoConfig.from_pretrained(teacher_path, num_labels=num_labels, finetuning_task=args.task_name)
+    teacher_model = AutoModelForSequenceClassification.from_pretrained(
+        teacher_path,
+        from_tf=bool(".ckpt" in args.model_name_or_path),
+        config=t_config,
+        ignore_mismatched_sizes=args.ignore_mismatched_sizes,
+    )
+    teacher_model.to(accelerator.device)
+
+
+    ###Prepare student model
     config = AutoConfig.from_pretrained(args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -331,26 +336,33 @@ def main():
         config=config,
         ignore_mismatched_sizes=args.ignore_mismatched_sizes,
     )
-    ##################################
-    #                                #
-    #    STEP 1: Replace Matrices    #
-    #                                #
-    ##################################
 
-    # Substitute weights with low rank matrix and sparse matrix
-    allow_name = ['query', 'key', 'value', 'q_proj', 'k_proj', 'v_proj', 'out_proj', 'dense', 'attention', 'fc1', 'fc2']
+    allow_name = ['query', 'key', 'value', 'query_proj', 'key_proj', 'value_proj', 'out_proj', 'dense', 'attention',
+                  'fc1', 'fc2']
     block_name = ['pooler', 'classifier', 'LayerNorm', 'embeddings']
-
+    total = 0
+    for n, p in model.base_model.named_parameters():
+        if p.dim() == 2 and any(nd in n for nd in allow_name):
+            total += p.size()[0] * p.size()[1]
     utils.substitute_layer_weights(module=model,
                                    allow_name=allow_name,
                                    block_name=block_name,
-                                   parameter_ratio=args.low_rank_parameter_ratio,
-                                   do_svd=True)
-    print(args.eval_checkpoint)
+                                   parameter_ratio=args.low_rank_parameter_ratio,do_svd=False)
+
+    model.resize_token_embeddings(len(tokenizer))
+    # print(model.load_state_dict(
+    #     torch.load(args.stored_model_path, map_location=accelerator.device),
+    #     strict=False))
+    print(model.load_state_dict(
+        torch.load(args.stored_model_path,
+                   map_location=accelerator.device),
+        strict=False))
+    utils.prune(model)
+    model = model.to(accelerator.device)
     if args.eval_checkpoint != "No checkpoint":
         print(model.load_state_dict(
-        torch.load(args.eval_checkpoint, map_location=accelerator.device),
-        strict=False))
+            torch.load(args.eval_checkpoint, map_location=accelerator.device),
+            strict=False))
     else:
         print("Not doing eval")
     # Preprocessing the datasets
@@ -370,13 +382,13 @@ def main():
     # Some models have set the order of the labels to use, so let's make sure we do use it.
     label_to_id = None
     if (
-        model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
-        and args.task_name is not None
-        and not is_regression
+            model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
+            and args.task_name is not None
+            and not is_regression
     ):
         # Some have all caps in their config, some don't.
         label_name_to_id = {k.lower(): v for k, v in model.config.label2id.items()}
-        if sorted(label_name_to_id.keys()) == sorted(label_list):
+        if list(sorted(label_name_to_id.keys())) == list(sorted(label_list)):
             logger.info(
                 f"The configuration of the model provided the following label correspondence: {label_name_to_id}. "
                 "Using it!"
@@ -385,7 +397,7 @@ def main():
         else:
             logger.warning(
                 "Your model seems to have been trained with labels, but they don't match the dataset: ",
-                f"model labels: {sorted(label_name_to_id.keys())}, dataset labels: {sorted(label_list)}."
+                f"model labels: {list(sorted(label_name_to_id.keys()))}, dataset labels: {list(sorted(label_list))}."
                 "\nIgnoring the model labels as a result.",
             )
     elif args.task_name is None and not is_regression:
@@ -462,7 +474,6 @@ def main():
     ]
     optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
-    # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
     if args.max_train_steps is None:
@@ -508,8 +519,8 @@ def main():
         metric = evaluate.load("accuracy")
 
     # Train!
-    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
+    total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
@@ -543,43 +554,49 @@ def main():
             starting_epoch = resume_step // len(train_dataloader)
             resume_step -= starting_epoch * len(train_dataloader)
 
-    ##################################
-    #                                #
-    #      STEP 2: Setup Pruner      #
-    #                                #
-    ##################################
-    pruner = utils.Pruner(model=model,
-                          args=args,
-                          total_step=args.max_train_steps,
-                          mask_param_name=['sparse'],
-                          pruner_name='PLATON')
-
+    alpha_output_distil_loss = args.alpha_output
+    alpha_layer_distill_loss = args.alpha_layer
+    print("The alpha used for output is " + str(alpha_output_distil_loss))
+    print("The alpha used for layer is " + str(alpha_layer_distill_loss))
+    loss_mse = MSELoss()
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
             total_loss = 0
-        if args.resume_from_checkpoint and epoch == starting_epoch and resume_step is not None:
-            # We skip the first `n` batches in the dataloader when resuming from a checkpoint
-            active_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
-        else:
-            active_dataloader = train_dataloader
-        for step, batch in enumerate(active_dataloader):
-            outputs = model(**batch)
-            loss = outputs.loss
+        for step, batch in enumerate(train_dataloader):
+            if args.resume_from_checkpoint and epoch == starting_epoch:
+                if resume_step is not None and step < resume_step:
+                    completed_steps += 1
+                    continue
+            outputs_with_hidden = model(**batch,output_hidden_states=True)
+            teacher_inputs = {}
+            teacher_inputs_ = batch.copy()
+            for k, v in teacher_inputs_.items():
+                teacher_inputs[k] = v.detach().clone()
+            with torch.no_grad():
+                teacher_outputs_with_hidden = teacher_model(**teacher_inputs,output_hidden_states=True)
+
+            loss = outputs_with_hidden.loss
+            if alpha_output_distil_loss != 0:
+                distillation_loss = F.kl_div(
+                    input=F.log_softmax(outputs_with_hidden[1] / temperature, dim=-1),
+                    target=F.softmax(teacher_outputs_with_hidden[1]/ temperature, dim=-1),
+                    reduction="batchmean",
+                ) * (temperature ** 2)
+                loss += alpha_output_distil_loss * distillation_loss
+            layer_distill_loss = 0
+            if alpha_layer_distill_loss != 0:
+                for i in range(13):
+                    layer_distill_loss += loss_mse(outputs_with_hidden[2][i],teacher_outputs_with_hidden[2][i])
+                loss += alpha_layer_distill_loss * layer_distill_loss
             # We keep track of the loss at each epoch
             if args.with_tracking:
                 total_loss += loss.detach().float()
             loss = loss / args.gradient_accumulation_steps
             accelerator.backward(loss)
+
             if step % args.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                 optimizer.step()
-                ##################################
-                #                                #
-                # STEP 3: Prune During Training  #
-                #                                #
-                ##################################
-
-                threshold, mask_threshold = pruner.update_and_pruning(model, completed_steps)
 
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -588,14 +605,14 @@ def main():
 
             if isinstance(checkpointing_steps, int):
                 if completed_steps % checkpointing_steps == 0:
-                    output_dir = f"step_{completed_steps }"
+                    output_dir = f"step_{completed_steps}"
                     if args.output_dir is not None:
                         output_dir = os.path.join(args.output_dir, output_dir)
                     accelerator.save_state(output_dir)
 
             if completed_steps >= args.max_train_steps:
                 break
-            if completed_steps % (num_update_steps_per_epoch//4) == 1 and step % args.gradient_accumulation_steps == 0:
+            if completed_steps % (num_update_steps_per_epoch // 2) == 1 and step % args.gradient_accumulation_steps == 0:
                 output_dir = f"step_{completed_steps}"
                 if args.output_dir is not None:
                     output_dir = os.path.join(args.output_dir, output_dir)
@@ -620,82 +637,7 @@ def main():
                     )
 
                 eval_metric = metric.compute()
-                logger.info(
-                    f"Running LoSparse with seed {args.seed} with sparse threshold {threshold} with learning rate {args.learning_rate} rank ratio {args.low_rank_parameter_ratio} on step {completed_steps}  Evaluation metrics: {eval_metric}")
-
-        model.eval()
-        samples_seen = 0
-        for step, batch in enumerate(eval_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch)
-            predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
-            predictions, references = accelerator.gather((predictions, batch["labels"]))
-            # If we are in a multiprocess environment, the last batch has duplicates
-            if accelerator.num_processes > 1:
-                if step == len(eval_dataloader) - 1:
-                    predictions = predictions[: len(eval_dataloader.dataset) - samples_seen]
-                    references = references[: len(eval_dataloader.dataset) - samples_seen]
-                else:
-                    samples_seen += references.shape[0]
-            metric.add_batch(
-                predictions=predictions,
-                references=references,
-            )
-
-        eval_metric = metric.compute()
-        logger.info(f"epoch {epoch}: {eval_metric}")
-
-        if args.with_tracking:
-            accelerator.log(
-                {
-                    "accuracy" if args.task_name is not None else "glue": eval_metric,
-                    "train_loss": total_loss.item() / len(train_dataloader),
-                    "epoch": epoch,
-                    "step": completed_steps,
-                },
-                step=completed_steps,
-            )
-
-        if args.push_to_hub and epoch < args.num_train_epochs - 1:
-            accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(
-                args.output_dir, is_main_process=accelerator.is_main_process, save_function=accelerator.save
-            )
-            if accelerator.is_main_process:
-                tokenizer.save_pretrained(args.output_dir)
-                repo.push_to_hub(
-                    commit_message=f"Training in progress epoch {epoch}", blocking=False, auto_lfs_prune=True
-                )
-
-        if args.checkpointing_steps == "epoch":
-            output_dir = f"epoch_{epoch}"
-            if args.output_dir is not None:
-                output_dir = os.path.join(args.output_dir, output_dir)
-            accelerator.save_state(output_dir)
-
-    if args.eval_checkpoint != "No checkpoint":
-        model.eval()
-        samples_seen = 0
-        for step, batch in enumerate(eval_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch)
-            predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
-            predictions, references = accelerator.gather((predictions, batch["labels"]))
-            # If we are in a multiprocess environment, the last batch has duplicates
-            if accelerator.num_processes > 1:
-                if step == len(eval_dataloader) - 1:
-                    predictions = predictions[: len(eval_dataloader.dataset) - samples_seen]
-                    references = references[: len(eval_dataloader.dataset) - samples_seen]
-                else:
-                    samples_seen += references.shape[0]
-            metric.add_batch(
-                predictions=predictions,
-                references=references,
-            )
-
-        eval_metric = metric.compute()
-        logger.info(f"Evaluate: {eval_metric}")
+                logger.info(f"LoSparse distillation {args.task_name} alpha out {alpha_output_distil_loss} alpha layer {alpha_layer_distill_loss} learning_rate{args.learning_rate} seed{args.seed} step {completed_steps} epoch {epoch}: {eval_metric}")
 
     if args.with_tracking:
         accelerator.end_training()
@@ -710,6 +652,30 @@ def main():
             tokenizer.save_pretrained(args.output_dir)
             if args.push_to_hub:
                 repo.push_to_hub(commit_message="End of training", auto_lfs_prune=True)
+
+    model.eval()
+    samples_seen = 0
+    for step, batch in enumerate(eval_dataloader):
+        with torch.no_grad():
+            outputs = model(**batch)
+        predictions = outputs.logits.argmax(dim=-1) if not is_regression else outputs.logits.squeeze()
+        predictions, references = accelerator.gather((predictions, batch["labels"]))
+        # If we are in a multiprocess environment, the last batch has duplicates
+        if accelerator.num_processes > 1:
+            if step == len(eval_dataloader) - 1:
+                predictions = predictions[: len(eval_dataloader.dataset) - samples_seen]
+                references = references[: len(eval_dataloader.dataset) - samples_seen]
+            else:
+                samples_seen += references.shape[0]
+        metric.add_batch(
+            predictions=predictions,
+            references=references,
+        )
+
+    eval_metric = metric.compute()
+    # print(f"alpha out {alpha_output_distil_loss} alpha layer {alpha_layer_distill_loss} epoch {epoch}: {eval_metric}")
+    logger.info(
+        f"LoSparse distillation {args.task_name} alpha out {alpha_output_distil_loss} alpha layer {alpha_layer_distill_loss} learning_rate{args.learning_rate} final result: {eval_metric}")
 
     if args.task_name == "mnli":
         # Final evaluation on mismatched validation set
@@ -729,12 +695,12 @@ def main():
             )
 
         eval_metric = metric.compute()
-        logger.info(f"mnli-mm: {eval_metric}")
+        print(f"alpha out {alpha_output_distil_loss} alpha layer {alpha_layer_distill_loss} mnli-mm: {eval_metric}")
+        logger.info(f"alpha out {alpha_output_distil_loss} alpha layer {alpha_layer_distill_loss} mnli-mm: {eval_metric}")
 
     if args.output_dir is not None:
-        all_results = {f"eval_{k}": v for k, v in eval_metric.items()}
         with open(os.path.join(args.output_dir, "all_results.json"), "w") as f:
-            json.dump(all_results, f)
+            json.dump({"eval_accuracy": eval_metric["accuracy"]}, f)
 
 
 if __name__ == "__main__":

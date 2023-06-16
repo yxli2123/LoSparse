@@ -135,7 +135,8 @@ class LinearLoSparse(nn.Module):
 
     def prune_sparse(self):
         self.nonzero_idx = torch.nonzero(self.sparse.weight.sum(dim=1)).flatten()
-        self.sparse_weight_pruned = self.sparse.weight[self.nonzero_idx, :]
+        # self.sparse_weight_pruned = self.sparse.weight[self.nonzero_idx, :]
+        self.sparse_weight_pruned = nn.Parameter(self.sparse.weight[self.nonzero_idx, :])
 
 
 def prune(module):

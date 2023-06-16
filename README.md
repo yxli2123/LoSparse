@@ -68,7 +68,7 @@ python run_glue.py \
   --dataset_name \
   
 ```
-We provided sample script in: `train_qa.sh`
+We provided sample training script in: `train_glue.sh`, `train_qa.sh`, `train_summarization.sh`. Additionally, we provide the distillation script for the glue experiments in `train_glue_distil.sh`. You can also do quick eval on some sample checkpoints we release by substituting the path for `eval_checkpoint` in `eval_glue.sh` and `eval_glue_distil.sh`.
 ### Arguments
 
 #### Main experiment arguments
@@ -82,7 +82,8 @@ We provided sample script in: `train_qa.sh`
 - `--initial_warmup`: steps that do not prune; fine-tuning only
 - `--final_warmup`: steps that do not decrease the pruning ratio
 - `--beta1`: moving average coefficient of the importance score
-
+- `--stored_model_path`: only used during distillation; the path for the pruned model that want to be distilled
+- `--teacher_path`: only used during distillation; the path of the teacher model
 ## Plug to your code!
 
 3 steps to apply our method to your code. Make sure you have `import utils` first.

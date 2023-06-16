@@ -2,7 +2,7 @@
 # Trained on a single V100 32GB
 python run_glue.py \
 --task_name mnli \
---model_name_or_path microsoft/deberta-v3-base  \
+--model_name_or_path microsoft/deberta-v3-base \
 --warmup_steps 675 \
 --initial_threshold 1 \
 --final_threshold 0.15 \
