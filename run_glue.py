@@ -338,7 +338,7 @@ def main():
     ##################################
 
     # Substitute weights with low rank matrix and sparse matrix
-    allow_name = ['query', 'key', 'value', 'q_proj', 'k_proj', 'v_proj', 'out_proj', 'dense', 'attention', 'fc1', 'fc2']
+    allow_name = ['query', 'key', 'value', 'q_proj', 'k_proj', 'v_proj', 'query_proj', 'key_proj', 'value_proj', 'out_proj', 'dense', 'attention', 'fc1', 'fc2']
     block_name = ['pooler', 'classifier', 'LayerNorm', 'embeddings']
 
     utils.substitute_layer_weights(module=model,
@@ -346,11 +346,12 @@ def main():
                                    block_name=block_name,
                                    parameter_ratio=args.low_rank_parameter_ratio,
                                    do_svd=True)
-    print(args.eval_checkpoint)
+    # model = model.to(accelerator.device)
+    model.resize_token_embeddings(len(tokenizer))
     if args.eval_checkpoint != "No checkpoint":
         print(model.load_state_dict(
-        torch.load(args.eval_checkpoint, map_location=accelerator.device),
-        strict=False))
+            torch.load(args.eval_checkpoint, map_location=accelerator.device),
+            strict=False))
     else:
         print("Not doing eval")
     # Preprocessing the datasets

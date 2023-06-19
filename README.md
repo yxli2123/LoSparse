@@ -69,6 +69,38 @@ python run_glue.py \
   
 ```
 We provided sample training script in: `train_glue.sh`, `train_qa.sh`, `train_summarization.sh`. Additionally, we provide the distillation script for the glue experiments in `train_glue_distil.sh`. You can also do quick eval on some sample checkpoints we release by substituting the path for `eval_checkpoint` in `eval_glue.sh` and `eval_glue_distil.sh`.
+
+The checkpoints are shown below
+
+**DeBERTa-v3-base and BERT-base on GLUE w/o knowledge distillation**
+
+| Model Name      | TASK      |  Parameter ratio |  Performance |
+| ------------    | --------- | ---------------- |--------------|
+| [deberta_mnli_20](https://www.dropbox.com/s/1mmpjaj851hof8a/deberta_mnli_20.bin) | MNLI      |  20              |  84.6
+| [deberta_mnli_15](https://www.dropbox.com/s/iejlwggckidjrmk/deberta_mnli_15.bin) | MNLI      |  15              |  83.3
+| [deberta_mnli_10](https://www.dropbox.com/s/qa55uh7p702qlp0/deberta_mnli_10.bin) | MNLI      |  10              |  81.6
+| [deberta_rte_20](https://www.dropbox.com/s/a07g1far2smlalh/deberta_rte_20.bin)     | RTE |  20              | 69.0
+| [deberta_rte_15](https://www.dropbox.com/s/ui75hemwvcayp9r/deberta_rte_15.bin)     | RTE |  15              | 67.1
+| [deberta_rte_10](https://www.dropbox.com/s/z8wpuli2uwlk7kt/deberta_rte_10.bin)     | RTE |  10              | 66.8
+| [deberta_cola_20](https://www.dropbox.com/s/e2tw1l9u2smpsd4/deberta_cola_20.bin)     | COLA |  20              | 50.7
+| [deberta_cola_15](https://www.dropbox.com/s/3y71y0jbno8uwlx/deberta_cola_15.bin)     | COLA  |  15              | 46.6
+| [deberta_cola_10](https://www.dropbox.com/s/7y8i53yxn79vpxj/deberta_cola_10.bin)     | COLA  |  10              | 40.6
+| [deberta_stsb_20](https://www.dropbox.com/s/cmvduaa1n2sgteq/deberta_stsb_20.bin)     | STSB |  20              | 89.0 / 88.6
+| [deberta_stsb_15](https://www.dropbox.com/s/dkx4rtpnd30hhki/deberta_stsb_15.bin)     | STSB |  15              | 87.9 / 87.5
+| [deberta_stsb_10](https://www.dropbox.com/s/dmm3l3vmsgfaug1/deberta_stsb_10.bin)     | STSB |  10              | 87.2 / 86.8
+| [bert_rte_20](https://www.dropbox.com/s/mz1cy01dp4tlpyq/bert_rte_20.bin)         | RTE  |  20              | 66.1.7
+| [bert_rte_15](https://www.dropbox.com/s/xf5cdenimaojhko/bert_rte_15.bin)         | RTR  |  15              | 64.6 
+| [bert_rte_10](https://www.dropbox.com/s/rcnl6ncq5hw082j/bert_rte_10.bin)         | RTE  |  10              | 63.2
+
+**BERT-base on GLUE with knowledge distillation**
+
+| Model Name      | TASK      |  Parameter ratio |  Performance |
+| ------------    | --------- | ---------------- |--------------|
+| [bert_mnli_25_distil](https://www.dropbox.com/s/xb04hm4crrm2f85/bert_mnli_25_distil.bin)     | MNLI             |  25             |           84.6     
+| [bert_mnli_50_distil](https://www.dropbox.com/s/69jelv6rdmeai3l/bert_mnli_50_distil.bin)     | MNLI             |  50             |           85.1  
+| [bert_rte_50_distil](https://www.dropbox.com/s/wtrtngjby537su3/bert_rte_50_distill.bin)      | RTE              |  50             |           75.8                  
+
+You can easily download the checkpoints through `wget` command
 ### Arguments
 
 #### Main experiment arguments

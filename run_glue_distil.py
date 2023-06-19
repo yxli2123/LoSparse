@@ -347,12 +347,9 @@ def main():
     utils.substitute_layer_weights(module=model,
                                    allow_name=allow_name,
                                    block_name=block_name,
-                                   parameter_ratio=args.low_rank_parameter_ratio,do_svd=False)
+                                   parameter_ratio=args.low_rank_parameter_ratio,do_svd=True)
 
     model.resize_token_embeddings(len(tokenizer))
-    # print(model.load_state_dict(
-    #     torch.load(args.stored_model_path, map_location=accelerator.device),
-    #     strict=False))
     print(model.load_state_dict(
         torch.load(args.stored_model_path,
                    map_location=accelerator.device),
