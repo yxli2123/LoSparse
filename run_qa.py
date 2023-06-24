@@ -876,7 +876,6 @@ def main():
                           total_step=args.max_train_steps,
                           mask_param_name=['sparse'],
                           pruner_name='PLATON')
-
     for epoch in range(starting_epoch, args.num_train_epochs):
         model.train()
         if args.with_tracking:
@@ -967,8 +966,6 @@ def main():
                     f"Running LoSparse with seed {args.seed} with sparse threshold {threshold} with learning rate {args.learning_rate} rank ratio {args.low_rank_parameter_ratio} on step {completed_steps}  Evaluation metrics: {eval_metric}")
 
 
-                if threshold == args.final_threshold:
-                    performace_dict[completed_steps] = eval_metric["f1"]
 
         if args.checkpointing_steps == "epoch":
             output_dir = f"epoch_{epoch}"
