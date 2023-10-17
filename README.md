@@ -4,7 +4,7 @@
 
 
 
-This pytorch package implements [LoSparse: Structured Compression of Large Language Models based on Low-Rank and Sparse Approximation]() (ICML 2023).
+This pytorch package implements [LoSparse: Structured Compression of Large Language Models based on Low-Rank and Sparse Approximation](https://arxiv.org/abs/2306.11222) (ICML 2023).
 
 ## Overview
 
